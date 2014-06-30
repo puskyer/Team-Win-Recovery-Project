@@ -1,3 +1,21 @@
+/*
+	Copyright 2012 bigbiff/Dees_Troy TeamWin
+	This file is part of TWRP/TeamWin Recovery Project.
+
+	TWRP is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	TWRP is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with TWRP.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -261,6 +279,7 @@ unsigned long TWFunc::Get_File_Size(string Path) {
 }
 
 void TWFunc::Copy_Log(string Source, string Destination) {
+	PartitionManager.Mount_By_Path(Destination, false);
 	FILE *destination_log = fopen(Destination.c_str(), "a");
 	if (destination_log == NULL) {
 		LOGERR("TWFunc::Copy_Log -- Can't open destination log file: '%s'\n", Destination.c_str());
@@ -282,11 +301,20 @@ void TWFunc::Copy_Log(string Source, string Destination) {
 
 void TWFunc::Update_Log_File(void) {
 	// Copy logs to cache so the system can find out what happened.
-	Copy_Log(TMP_LOG_FILE, "/cache/recovery/log");
-	copy_file("/cache/recovery/log", "/cache/recovery/last_log", 600);
-	chown("/cache/recovery/log", 1000, 1000);
-	chmod("/cache/recovery/log", 0600);
-	chmod("/cache/recovery/last_log", 0640);
+	if (PartitionManager.Mount_By_Path("/cache", false)) {
+		if (!TWFunc::Path_Exists("/cache/recovery/.")) {
+			LOGINFO("Recreating /cache/recovery folder.\n");
+			if (mkdir("/cache/recovery", S_IRWXU | S_IRWXG | S_IWGRP | S_IXGRP) != 0)
+				LOGINFO("Unable to create /cache/recovery folder.\n");
+		}
+		Copy_Log(TMP_LOG_FILE, "/cache/recovery/log");
+		copy_file("/cache/recovery/log", "/cache/recovery/last_log", 600);
+		chown("/cache/recovery/log", 1000, 1000);
+		chmod("/cache/recovery/log", 0600);
+		chmod("/cache/recovery/last_log", 0640);
+	} else {
+		LOGINFO("Failed to mount /cache for TWFunc::Update_Log_File\n");
+	}
 
 	// Reset bootloader message
 	TWPartition* Part = PartitionManager.Find_Partition_By_Path("/misc");
@@ -304,11 +332,12 @@ void TWFunc::Update_Log_File(void) {
 		}
 	}
 
-	if (!PartitionManager.Mount_By_Path("/cache", true) || (unlink("/cache/recovery/command") && errno != ENOENT)) {
-		LOGINFO("Can't unlink %s\n", "/cache/recovery/command");
+	if (PartitionManager.Mount_By_Path("/cache", true)) {
+		if (unlink("/cache/recovery/command") && errno != ENOENT) {
+			LOGINFO("Can't unlink %s\n", "/cache/recovery/command");
+		}
 	}
 
-	PartitionManager.UnMount_By_Path("/cache", true);
 	sync();
 }
 
@@ -1005,6 +1034,13 @@ void TWFunc::Auto_Generate_Backup_Name() {
 			Backup_Name += " " + propvalue;
 			if (Backup_Name.size() > MAX_BACKUP_NAME_LEN)
 				Backup_Name.resize(MAX_BACKUP_NAME_LEN);
+			// Trailing spaces cause problems on some file systems, so remove them
+			string space_check, space = " ";
+			space_check = Backup_Name.substr(Backup_Name.size() - 1, 1);
+			while (space_check == space) {
+				Backup_Name.resize(Backup_Name.size() - 1);
+				space_check = Backup_Name.substr(Backup_Name.size() - 1, 1);
+			}
 			DataManager::SetValue(TW_BACKUP_NAME, Backup_Name);
 			break;
 		}
